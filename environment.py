@@ -6,52 +6,71 @@ from shepherd import Shepherd
 from agent import Agent
 from functools import reduce
 
-FPS = 1200
+FPS = 80
 fpsClock = pygame.time.Clock()
 
 class Environment:
-    def __init__(self):
-        self.width = 200
-        self.height = self.width
-        self.padding = 30
-        # screen dimensions, padding included
-        self.screen_width = self.width+2*self.padding
-        self.screen_height = self.height+2*self.padding
-        self.screen = pygame.display.set_mode((self.screen_width, self.screen_height))
-        self.target = [self.width+self.padding, self.height+self.padding]       # target location
-        self.target_radius = 20     # distance from target to trigger win condition
-        # shepherd and agents initalized in reset function
+    def __init__(self, render):
+        self.padding = 35
+        if render:
+            pygame.init()
+            screen_length = field_length+2*self.padding
+            self.screen = pygame.display.set_mode((screen_length, screen_length))
+        # initalized in reset function
         self.shepherd = None
         self.agents = []
         self.agent_posns = []
+        self.target = []    # target location
+        self.key_action = 0
         self.reset()
 
     def reset(self):
-        # start shepherd at target, agents in upper left hand corner
-        # self.shepherd = Shepherd(self.target)
-        # self.agents = [Agent([self.padding+L*np.random.rand(), self.padding+L*np.random.rand()]) 
-        #                 for i in range(0, num_agents)]
+        # self.init_v1()        
+        self.init_v2()
+        # self.init_v3()
+        self.agent_posns = [a.get_pos() for a in self.agents]
+
+    def init_v1(self):
         # start shepherd behind agents
+        self.target = [field_length+self.padding, field_length+self.padding]
         self.shepherd = Shepherd([self.padding, self.padding])
         offset = self.padding+r_s/1.4
-        self.agents = [Agent([offset+init_field*np.random.rand(), offset+init_field*np.random.rand()]) 
-                        for i in range(0, num_agents)]
-        self.agent_posns = [a.get_pos() for a in self.agents]
+        self.agents = []
+        for _ in range(0, num_agents):
+            a = Agent([offset+agent_init*np.random.rand(), 
+                        offset+agent_init*np.random.rand()]) 
+            self.agents.append(a)
+    
+    def init_v2(self):
+        # start shepherd at target, agents in upper left hand corner
+        self.target = [field_length+self.padding, field_length+self.padding]
+        self.shepherd = Shepherd(self.target)
+        self.agents = []
+        for _ in range(0, num_agents):
+            a = Agent([self.padding+agent_init*np.random.rand(), 
+                        self.padding+agent_init*np.random.rand()]) 
+            self.agents.append(a)
+
+    def init_v3(self):
+        # randomize shepherd and agent positions, set target to center
+        self.target = [field_length/2+self.padding, field_length/2+self.padding]
+        self.shepherd = Shepherd([self.padding+field_length*np.random.rand(),
+                                    self.padding+field_length*np.random.rand()])
+        self.agents = []
+        for _ in range(0, num_agents):
+            a = Agent([self.padding+field_length*np.random.rand(), 
+                        self.padding+field_length*np.random.rand()]) 
+            self.agents.append(a)
+        pass
 
     def step(self, action=None):
         # update shepherd; action is None --> mouse input
         if action is None:
-            control_vect = np.subtract(pygame.mouse.get_pos(), self.shepherd.get_pos())
-            angle = np.arctan(control_vect[1]/control_vect[0])
-            if control_vect[0] < 0:
-                angle += np.pi
-            scale = min(dist(control_vect), 50)/50
-            self.shepherd.step(angle, scale)
+            # choose between mouse or keyboard input
+            self.step_mouse_input()
+            # self.step_key_input()           
         else:
-            if action == 0:
-                self.shepherd.step(0, 0)
-            else:
-                self.shepherd.step(np.pi*(action % 4)/2, 1)
+            self.shepherd.step(np.pi*(action % 4)/2, 1)
 
         # distances[i][j-i-1] will contain distance from i to j, i < j
         distances = [[dist(self.agent_posns[i], self.agent_posns[j]) for j in range(i+1, num_agents)] 
@@ -60,33 +79,51 @@ class Environment:
         # update agent positions
         self.agent_posns = [a.get_pos() for a in self.agents]
 
+        # return self.test_dqn()
+
         # give a reward based on GCM distance to target
         gcm = reduce(np.add, self.agent_posns)/len(self.agent_posns)
         gcm_to_target = dist(self.target, gcm)
-        reward = -gcm_to_target/(self.width*1.41)
-
+        reward = -(gcm_to_target-target_radius)/(field_length*1.41)
+        
+        # encourage shepherd to approach agent
         shep_to_agent = min([dist(agent_pos, self.shepherd.get_pos()) for agent_pos in self.agent_posns])
-        reward -= (shep_to_agent/r_s - 1)
-
-        # penalize if shepherd goes off screen
-        # if self.shepherd.get_pos()[0] < 0  or self.shepherd.get_pos()[0] > self.screen_width:
-        #     if self.shepherd.get_pos()[1] < 0 or self.shepherd.get_pos()[1] > self.screen_height:
-        #         reward -= 1
-
-        # # testing purposes: objective shepherd to target
-        # reward = -dist(self.shepherd.get_pos(), self.target)
-        # if -reward < self.target_radius:
-        #     return 1000, True
-        # return reward, False
-
+        reward -= shep_to_agent/r_s - 1
+        
         # return game_won = True if furthest agent within target_radius
         game_over = False
         max_agent_dist = max([dist(agent_pos, self.target) for agent_pos in self.agent_posns])
-        if max_agent_dist < self.target_radius:
+        if max_agent_dist < target_radius:
             reward = 1000
             game_over = True
             
         return reward, game_over
+
+    def test_dqn(self):
+        distance = dist(self.shepherd.get_pos(), self.target)
+        if (distance < 20):
+            return 1000, True
+        return -distance, False
+
+    def step_mouse_input(self):
+        control_vect = np.subtract(pygame.mouse.get_pos(), self.shepherd.get_pos())
+        angle = np.arctan(control_vect[1]/control_vect[0])
+        if control_vect[0] < 0:
+            angle += np.pi
+        scale = min(dist(control_vect), 50)/50
+        self.shepherd.step(angle, scale)
+
+    def step_key_input(self):
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_RIGHT]:
+            self.key_action = 0
+        elif keys[pygame.K_DOWN]:
+            self.key_action = 1
+        elif keys[pygame.K_LEFT]:
+            self.key_action = 2
+        elif keys[pygame.K_UP]:
+            self.key_action = 3
+        self.shepherd.step(np.pi*(self.key_action % 4)/2, 1)
 
     def render(self):
         self.screen.fill((0, 0, 0))
@@ -115,11 +152,11 @@ class Environment:
             else:
                 action = dqn_agent.get_action(self.get_state())
                 game_over = self.step(action)[1]
-            if game_over:
+            keys = pygame.key.get_pressed()
+            if game_over or keys[pygame.K_r]:
                 self.reset()
             fpsClock.tick(FPS)
 
-pygame.init()
 if __name__ == "__main__":
-    Environment().run()
+    Environment(True).run()
     

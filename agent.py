@@ -22,14 +22,14 @@ class Agent(Unit):
                 self.h_vect += rand_unit()         
         else:
             # attracted to local center of mass of nearest agents (ignore self at index 0)
-            C = 0
+            c_vect = 0
             if num_nearest > 0:
                 nearest_positions = sorted(agent_pos, key=lambda x: dist(agent_pos[i], x))[1:num_nearest+1]
                 local_center = reduce(np.add, nearest_positions)/num_nearest
-                C = unit_vect(local_center, agent_pos[i])
+                c_vect = unit_vect(local_center, agent_pos[i])
             
             # repelled from shepherd
             R_s = unit_vect(agent_pos[i], shepherd.get_pos())
-            self.h_vect = h*unit_vect(self.h_vect) + c*C + p_a*R_a + p_s*R_s + e*rand_unit()
+            self.h_vect = h*unit_vect(self.h_vect) + c*c_vect + p_a*R_a + p_s*R_s + e*rand_unit()
             
         self.update_pos(delta_a*unit_vect(self.h_vect))

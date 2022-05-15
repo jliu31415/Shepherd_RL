@@ -24,13 +24,13 @@ class DQN(nn.Module):
         x = self.output(x)
         return x
 
-    def save(self, episode_num, memory, epsilon, file_name):
+    def save(self, episode_num, file_name):
         # create thread to prevent keyboard interrupt
-        a = Thread(target=self.save_thread, args=(episode_num, memory, epsilon, file_name))
+        a = Thread(target=self.save_thread, args=(episode_num, file_name))
         a.start()
         a.join()
 
-    def save_thread(self, episode_num, memory, epsilon, file_name):
+    def save_thread(self, episode_num, file_name):
         # save model
         folder_path = './model'
         if not os.path.exists(folder_path):
@@ -39,14 +39,12 @@ class DQN(nn.Module):
         T.save({
             'model_state_dict': self.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'episode': episode_num,
-            'memory': memory,
-            'epsilon': epsilon
+            'episode': episode_num
         }, file_name)
 
-    # load model, and return episode number
+    # load model and return episode number
     def load(self, file_name):
-        checkpoint = T.load('./model/' + file_name)
+        checkpoint = T.load('./model/' + file_name, map_location=self.device)
         self.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        return checkpoint['episode'], checkpoint['memory'], checkpoint['epsilon']
+        return checkpoint['episode']

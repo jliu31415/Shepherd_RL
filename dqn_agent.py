@@ -2,41 +2,46 @@ import numpy as np
 from collections import deque
 import random
 from environment import Environment
-from parameters import num_agents
+from parameters import num_agents, frame_reset
 from dqn import DQN
 import torch as T
 import time
 import argparse
 
-MODEL_PATH = 'model.pth'
-AUTO_RESET = 500   # automatically reset game after x frames
+MODEL_PATH = 'model2.pth'
+# output/render while training
+OUTPUT = True
+RENDER = True
 
 class DQNAgent:
-    def __init__(self, gamma, epsilon, lr, batch_size,
-                    max_mem_size=100000, eps_min=0.01, eps_dec=5e-4):
+    def __init__(self, gamma, lr, batch_size, max_mem_size=100000, 
+                eps_start=0.9, eps_end=0.01, eps_decay=200):
         self.episode_num = 0
         self.gamma = gamma
-        self.epsilon = epsilon        # randomness
-        self.eps_min = eps_min
-        self.eps_dec = eps_dec
-        self.lr = lr      # learning rate
+        self.eps_start = eps_start
+        self.eps_end = eps_end
+        self.eps_decay = eps_decay
         self.mem_size = max_mem_size
         self.memory = deque(maxlen=self.mem_size)
         self.input_size = 2*(num_agents+1)
-        self.output_size = 5
+        self.output_size = 4
         self.batch_size = batch_size
-        self.dqn = DQN(self.lr, self.input_size, self.output_size)
+        self.dqn = DQN(lr, self.input_size, self.output_size)
+        self.target_dqn = DQN(lr, self.input_size, self.output_size)
+        self.target_dqn.eval()
 
     def remember(self, state_old, action, reward, state_new, game_over):
         self.memory.append((state_old, action, reward, state_new, game_over))
 
     def get_action(self, state):
         # exploration vs exploitation
-        if random.random() < self.epsilon:
+        eps_threshold = self.eps_end+(self.eps_start-self.eps_end)*\
+            np.exp(-1.*self.episode_num/self.eps_decay)
+        if random.random() < eps_threshold:
             action = random.randint(0, self.output_size-1)
         else:
             state_tensor = T.tensor(np.array(state), dtype=T.float).to(self.dqn.device)
-            prediction = self.dqn.forward(state_tensor)
+            prediction = self.dqn(state_tensor)
             action = T.argmax(prediction).item()
         return action
 
@@ -52,21 +57,24 @@ class DQNAgent:
         state_new = T.tensor(np.array(state_new), dtype=T.float).to(self.dqn.device)
         game_over = T.tensor(np.array(game_over), dtype=T.bool).to(self.dqn.device)
         
-        self.dqn.optimizer.zero_grad()
-        q = self.dqn.forward(state_old)[range(self.batch_size), action]
-        q_next = self.dqn.forward(state_new)
+        q = self.dqn(state_old)[range(self.batch_size), action]
+        # expected values of actions computed based on the "older" target_dqn
+        q_next = self.target_dqn(state_new)
         q_next[game_over] = 0.0
         q_target = reward + self.gamma*T.max(q_next, dim=1)[0]
         loss = self.dqn.loss(q_target, q).to(self.dqn.device)
+        
+        # gradient descent
+        self.dqn.optimizer.zero_grad()
         loss.backward()
         self.dqn.optimizer.step()
-        self.epsilon = max(self.epsilon - self.eps_dec, self.eps_min)
 
     def save(self):
-        self.dqn.save(self.episode_num, self.memory, self.epsilon, MODEL_PATH)
+        self.dqn.save(self.episode_num, MODEL_PATH)
 
     def load(self, mode):
-        self.episode_num, self.memory, self.epsilon = self.dqn.load(MODEL_PATH)
+        self.episode_num = self.dqn.load(MODEL_PATH)
+        self.update_target_dqn()
         if mode == 'train':
             print("Training Mode")
             self.dqn.train()
@@ -74,15 +82,22 @@ class DQNAgent:
             print("Evaluation Mode")
             self.dqn.eval()
 
+    def update_target_dqn(self):
+        self.target_dqn.load_state_dict(self.dqn.state_dict())
+
 def train(dqn_agent):
-    env = Environment()
+    env = Environment(RENDER)
     timer = time.time()
-    while env.pygame_running():
+    reward_memory = []
+    num_wins = 0
+    while not RENDER or env.pygame_running():
         score = 0
+        episode_reward = 0
         game_over = False
         state_old = env.get_state()
-        while not game_over and score != AUTO_RESET:
-            env.render()
+        while not game_over and score != frame_reset:
+            if RENDER:
+                env.render()
             action = dqn_agent.get_action(state_old)
             reward, game_over = env.step(action)
             state_new = env.get_state()
@@ -90,15 +105,32 @@ def train(dqn_agent):
             dqn_agent.learn()
             state_old = state_new
             score += 1
+            episode_reward += reward
 
-        print(f"Episode: {dqn_agent.episode_num} Time: {time.time()-timer:.3f} Score: {score}")
+        reward_memory.append(episode_reward)
+        indicator = "L "
+        if score < frame_reset:
+            indicator = "W "
+            num_wins += 1
+        if OUTPUT:
+            print(indicator + f"Episode {dqn_agent.episode_num}: time={time.time()-timer:.2f}s, " \
+                    + f"score={score}, reward={episode_reward: .2f}")
         timer = time.time()
         
         env.reset()
         dqn_agent.episode_num += 1
-        # save every 10 games
+        # update target network and save every 10 games
         if dqn_agent.episode_num % 10 == 0:
+            dqn_agent.update_target_dqn()
             dqn_agent.save()
+            print(f"Network saved on episode {dqn_agent.episode_num}, " \
+                + f"avg reward={np.average(reward_memory):.2f}, " \
+                + f"wins={num_wins}")
+            reward_memory = []
+            num_wins = 0
+
+        if num_wins == 10:
+            break
 
 if __name__ == '__main__':
     # Construct an argument parser
@@ -108,13 +140,12 @@ if __name__ == '__main__':
     args = vars(all_args.parse_args())
     
     # initialize and load model
-    dqn_agent = DQNAgent(gamma=.99, epsilon=1.0, lr=.003, batch_size=64)
+    dqn_agent = DQNAgent(gamma=.99, lr=.003, batch_size=64)
     if args['train'] == '1':
         if args['reset'] != '1':  
             dqn_agent.load(mode='train')
-            pass
         train(dqn_agent)
     else:
         dqn_agent.load(mode='eval')
-        Environment().run(dqn_agent)
+        Environment(True).run(dqn_agent)
     
