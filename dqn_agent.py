@@ -1,20 +1,21 @@
+from pickle import FRAME
 import numpy as np
 from collections import deque
 import random
 from environment import Environment
-from parameters import num_agents, frame_reset
+from parameters import *
 from dqn import DQN
 import torch as T
 import time
 import argparse
 
-MODEL_PATH = 'model2.pth'
+MODEL_PATH = 'model.pth'
 # output/render while training
 OUTPUT = True
 RENDER = True
 
 class DQNAgent:
-    def __init__(self, gamma, lr, batch_size, max_mem_size=100000, 
+    def __init__(self, gamma=.99, lr=.003, batch_size=64, max_mem_size=100000, 
                 eps_start=0.9, eps_end=0.01, eps_decay=200):
         self.episode_num = 0
         self.gamma = gamma
@@ -23,7 +24,7 @@ class DQNAgent:
         self.eps_decay = eps_decay
         self.mem_size = max_mem_size
         self.memory = deque(maxlen=self.mem_size)
-        self.input_size = 2*(num_agents+1)
+        self.input_size = (FIELD_LENGTH, FIELD_LENGTH)
         self.output_size = 4
         self.batch_size = batch_size
         self.dqn = DQN(lr, self.input_size, self.output_size)
@@ -41,7 +42,9 @@ class DQNAgent:
             action = random.randint(0, self.output_size-1)
         else:
             state_tensor = T.tensor(np.array(state), dtype=T.float).to(self.dqn.device)
-            prediction = self.dqn(state_tensor)
+            # add batch dimension
+            state_tensor = T.unsqueeze(state_tensor, 0)
+            prediction = self.dqn.forward(state_tensor)
             action = T.argmax(prediction).item()
         return action
 
@@ -57,9 +60,9 @@ class DQNAgent:
         state_new = T.tensor(np.array(state_new), dtype=T.float).to(self.dqn.device)
         game_over = T.tensor(np.array(game_over), dtype=T.bool).to(self.dqn.device)
         
-        q = self.dqn(state_old)[range(self.batch_size), action]
+        q = self.dqn.forward(state_old)[range(self.batch_size), action]
         # expected values of actions computed based on the "older" target_dqn
-        q_next = self.target_dqn(state_new)
+        q_next = self.target_dqn.forward(state_new)
         q_next[game_over] = 0.0
         q_target = reward + self.gamma*T.max(q_next, dim=1)[0]
         loss = self.dqn.loss(q_target, q).to(self.dqn.device)
@@ -95,7 +98,7 @@ def train(dqn_agent):
         episode_reward = 0
         game_over = False
         state_old = env.get_state()
-        while not game_over and score != frame_reset:
+        while not game_over and score != FRAME_RESET:
             if RENDER:
                 env.render()
             action = dqn_agent.get_action(state_old)
@@ -109,7 +112,7 @@ def train(dqn_agent):
 
         reward_memory.append(episode_reward)
         indicator = "L "
-        if score < frame_reset:
+        if score < FRAME_RESET:
             indicator = "W "
             num_wins += 1
         if OUTPUT:
@@ -119,8 +122,9 @@ def train(dqn_agent):
         
         env.reset()
         dqn_agent.episode_num += 1
-        # update target network and save every 10 games
-        if dqn_agent.episode_num % 10 == 0:
+
+        # update target network and save every x games
+        if dqn_agent.episode_num % SAVE_TARGET == 0:
             dqn_agent.update_target_dqn()
             dqn_agent.save()
             print(f"Network saved on episode {dqn_agent.episode_num}, " \
@@ -129,7 +133,7 @@ def train(dqn_agent):
             reward_memory = []
             num_wins = 0
 
-        if num_wins == 10:
+        if num_wins == SAVE_TARGET:
             break
 
 if __name__ == '__main__':
@@ -140,7 +144,7 @@ if __name__ == '__main__':
     args = vars(all_args.parse_args())
     
     # initialize and load model
-    dqn_agent = DQNAgent(gamma=.99, lr=.003, batch_size=64)
+    dqn_agent = DQNAgent()
     if args['train'] == '1':
         if args['reset'] != '1':  
             dqn_agent.load(mode='train')
