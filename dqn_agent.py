@@ -1,13 +1,16 @@
-from pickle import FRAME
 import numpy as np
 from collections import deque
 import random
 from environment import Environment
 from parameters import *
-from dqn import DQN
 import torch as T
 import time
 import argparse
+
+if CNN_NETWORK:
+    from dqn_cnn import DQN
+else:
+    from dqn_linear import DQN
 
 MODEL_PATH = 'model.pth'
 # output/render while training
@@ -24,7 +27,10 @@ class DQNAgent:
         self.eps_decay = eps_decay
         self.mem_size = max_mem_size
         self.memory = deque(maxlen=self.mem_size)
-        self.input_size = (FIELD_LENGTH, FIELD_LENGTH)
+        if CNN_NETWORK:
+            self.input_size = (FIELD_LENGTH, FIELD_LENGTH)
+        else:
+            self.input_size = 2*MAX_NUM_AGENTS+4
         self.output_size = 4
         self.batch_size = batch_size
         self.dqn = DQN(lr, self.input_size, self.output_size)
@@ -133,7 +139,7 @@ def train(dqn_agent):
             reward_memory = []
             num_wins = 0
 
-        if num_wins == SAVE_TARGET:
+        if num_wins >= SAVE_TARGET*.8:
             break
 
 if __name__ == '__main__':

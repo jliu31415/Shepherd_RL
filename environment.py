@@ -128,6 +128,16 @@ class Environment:
             return 3
         return self.action
 
+    def get_mouse_input(self):
+        mouse_vect = pygame.mouse.get_pos() - self.padding - self.shepherd
+        if abs(mouse_vect[0]) > abs(mouse_vect[1]):
+            if mouse_vect[0] > 0:
+                return 0
+            return 2
+        if mouse_vect[1] > 0:
+            return 1
+        return 3        
+
     def render(self):
         self.screen.fill((0, 0, 0))
         pygame.draw.circle(self.screen, (255, 0, 0), tuple(self.padding + self.shepherd), 1, 0)
@@ -137,16 +147,23 @@ class Environment:
         pygame.display.update()
 
     def get_state(self):
-        state = np.zeros((FIELD_LENGTH, FIELD_LENGTH), dtype=np.int32)
-        # 100 := shepherd
-        # 200 := target
-        # x % 100 := number of sheep at given coordinates
-        state[self.shepherd[0], self.shepherd[1]] += 100
-        state[self.target[0], self.target[1]] += 200
-        for i, j in self.agents:
-            state[i, j] += 1
-        # add channel dimension
-        return np.expand_dims(state, axis=0)
+        if CNN_NETWORK:
+            state = np.zeros((FIELD_LENGTH, FIELD_LENGTH), dtype=np.int32)
+            # 100 := shepherd
+            # 200 := target
+            # x % 100 := number of sheep at given coordinates
+            state[self.shepherd[0], self.shepherd[1]] += 100
+            state[self.target[0], self.target[1]] += 200
+            for i, j in self.agents:
+                state[i, j] += 1
+            # add channel dimension
+            return np.expand_dims(state, axis=0)
+        else:
+            # pad self.agents to maintain constant dimensions
+            padded_agents = self.agents.flatten()
+            padded_agents = np.pad(padded_agents, (0, 2*MAX_NUM_AGENTS-len(padded_agents)), 
+                                'constant', constant_values=-100)
+            return np.concatenate((padded_agents, self.shepherd.flatten(), self.target.flatten()), axis=0)
 
     def pygame_running(self):
         for event in pygame.event.get():
@@ -164,6 +181,7 @@ class Environment:
 
             if dqn_agent is None:
                 self.action = self.get_key_input()
+                # self.action = self.get_mouse_input()
             else:
                 self.action = dqn_agent.get_action(self.get_state())
             _, game_over = self.step(self.action)
