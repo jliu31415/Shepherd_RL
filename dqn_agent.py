@@ -4,6 +4,7 @@ import random
 from environment import Environment
 from parameters import *
 import torch as T
+from torchsummary import summary
 import time
 import argparse
 
@@ -11,11 +12,6 @@ if CNN_NETWORK:
     from dqn_cnn import DQN
 else:
     from dqn_linear import DQN
-
-MODEL_PATH = 'model.pth'
-# output/render while training
-OUTPUT = True
-RENDER = True
 
 class DQNAgent:
     def __init__(self, gamma=.99, lr=.003, batch_size=64, max_mem_size=100000, 
@@ -81,9 +77,14 @@ class DQNAgent:
     def save(self):
         self.dqn.save(self.episode_num, MODEL_PATH)
 
-    def load(self, mode):
+    def load(self, mode, print_model):
         self.episode_num = self.dqn.load(MODEL_PATH)
         self.update_target_dqn()
+        if print_model:
+            if type(self.input_size) is tuple:
+                summary(self.dqn, (1,) + self.input_size)
+            else:
+                summary(self.dqn, (1, self.input_size))
         if mode == 'train':
             print("Training Mode")
             self.dqn.train()
@@ -99,15 +100,19 @@ def train(dqn_agent):
     timer = time.time()
     reward_memory = []
     num_wins = 0
-    while not RENDER or env.pygame_running():
-        score = 0
+    while True:
+        score = 0   # := number of frames
         episode_reward = 0
         game_over = False
         state_old = env.get_state()
-        while not game_over and score != FRAME_RESET:
+        while not game_over and (not RENDER or env.pygame_running()):
             if RENDER:
                 env.render()
-            action = dqn_agent.get_action(state_old)
+            if USER_INPUT:
+                action = env.get_key_input()
+                env.tick(60)
+            else: 
+                action = dqn_agent.get_action(state_old)
             reward, game_over = env.step(action)
             state_new = env.get_state()
             dqn_agent.remember(state_old, action, reward, state_new, game_over)
@@ -115,6 +120,8 @@ def train(dqn_agent):
             state_old = state_new
             score += 1
             episode_reward += reward
+            if score >= FRAME_RESET:
+                game_over = True
 
         reward_memory.append(episode_reward)
         indicator = "L "
@@ -137,25 +144,25 @@ def train(dqn_agent):
                 + f"avg reward={np.average(reward_memory):.2f}, " \
                 + f"wins={num_wins}")
             reward_memory = []
+            if num_wins >= SAVE_TARGET*.8:
+                break
             num_wins = 0
-
-        if num_wins >= SAVE_TARGET*.8:
-            break
 
 if __name__ == '__main__':
     # Construct an argument parser
     all_args = argparse.ArgumentParser()
-    all_args.add_argument("-train")
-    all_args.add_argument("-reset")
+    all_args.add_argument('-t', action='store_true')    # train (load from existing)
+    all_args.add_argument('-r', action='store_true')    # reset (train from scratch)
+    all_args.add_argument('-p', action='store_true')    # print model
     args = vars(all_args.parse_args())
     
     # initialize and load model
     dqn_agent = DQNAgent()
-    if args['train'] == '1':
-        if args['reset'] != '1':  
-            dqn_agent.load(mode='train')
+    if args['t']:
+        if not args['r']:  
+            dqn_agent.load(mode='train', print_model=args['p'])
         train(dqn_agent)
     else:
-        dqn_agent.load(mode='eval')
+        dqn_agent.load(mode='eval', print_model=args['p'])
         Environment(True).run(dqn_agent)
     

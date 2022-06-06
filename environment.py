@@ -32,7 +32,7 @@ class Environment:
         # self.target = np.copy(self.shepherd)
         self.shepherd = np.array([0, 0])
         self.target = np.array([FIELD_LENGTH-1, FIELD_LENGTH-1])
-        self.agents = R_S//2 + np.random.randint(FIELD_LENGTH/2, size=(self.num_agents, 2))
+        self.agents = R_S//2 + np.random.randint(FIELD_LENGTH*.5, size=(self.num_agents, 2))
 
     def step(self, action):
         # map action [0, 3] to direction vector
@@ -99,9 +99,6 @@ class Environment:
             
         return reward, game_over
 
-    def test_dqn(self):
-        pass
-
     # distance from [a1, a2] to [b1, b2]
     def dist(self, a, b=np.array([0, 0])):
         return np.linalg.norm(a-b)
@@ -119,24 +116,14 @@ class Environment:
     def get_key_input(self):
         keys = pygame.key.get_pressed()
         if keys[pygame.K_RIGHT]:
-            return 0
+            self.action = 0
         elif keys[pygame.K_DOWN]:
-            return 1
+            self.action = 1
         elif keys[pygame.K_LEFT]:
-            return 2
+            self.action = 2
         elif keys[pygame.K_UP]:
-            return 3
-        return self.action
-
-    def get_mouse_input(self):
-        mouse_vect = pygame.mouse.get_pos() - self.padding - self.shepherd
-        if abs(mouse_vect[0]) > abs(mouse_vect[1]):
-            if mouse_vect[0] > 0:
-                return 0
-            return 2
-        if mouse_vect[1] > 0:
-            return 1
-        return 3        
+            self.action = 3
+        return self.action      
 
     def render(self):
         self.screen.fill((0, 0, 0))
@@ -159,7 +146,7 @@ class Environment:
             # add channel dimension
             return np.expand_dims(state, axis=0)
         else:
-            # pad self.agents to maintain constant dimensions
+            # pad self.agents with coordinates (-100, 100) to maintain constant dimensions
             padded_agents = self.agents.flatten()
             padded_agents = np.pad(padded_agents, (0, 2*MAX_NUM_AGENTS-len(padded_agents)), 
                                 'constant', constant_values=-100)
@@ -171,6 +158,9 @@ class Environment:
                 return False
         return True
 
+    def tick(self, fps=FPS):
+        fpsClock.tick(fps)
+
     def enable_reset(self):
         self.reset_enabled = True
 
@@ -180,8 +170,7 @@ class Environment:
             self.render()
 
             if dqn_agent is None:
-                self.action = self.get_key_input()
-                # self.action = self.get_mouse_input()
+                self.get_key_input()
             else:
                 self.action = dqn_agent.get_action(self.get_state())
             _, game_over = self.step(self.action)
@@ -193,7 +182,7 @@ class Environment:
                 threading.Timer(.5, self.enable_reset).start()
             if keys[pygame.K_ESCAPE]:
                 break
-            fpsClock.tick(FPS)
+            self.tick()
 
 if __name__ == "__main__":
     Environment(True).run()
